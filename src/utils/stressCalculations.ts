@@ -70,14 +70,20 @@ export function checkStress(topStress: number, bottomStress: number): boolean {
 export function calculateDiameterForSpacing(astReq: number, spacing: number, stripWidth = 1000): number {
   const absAstReq = Math.abs(astReq);
   const absSpacing = Math.max(1, Math.abs(spacing));
-  if (absAstReq <= 0) return 8;
+  if (absAstReq <= 0) return 12;
 
   const targetNoOfBar = stripWidth / absSpacing;
-  if (targetNoOfBar <= 0) return 8;
+  if (targetNoOfBar <= 0) return 12;
 
   const requiredRebar = absAstReq / targetNoOfBar;
   const diameter = Math.sqrt((requiredRebar * 4) / Math.PI);
-  return Math.max(8, Number.isFinite(diameter) ? diameter : 8);
+  // return Math.max(12, Number.isFinite(diameter) ? diameter : 12);
+  
+  const allowedDiameters = [12, 16, 20, 25, 32];
+  for (const d of allowedDiameters) {
+    if (d >= diameter) return d;
+  }
+  return 32;
 }
 
 export function calculateRow(
@@ -92,7 +98,7 @@ export function calculateRow(
   const stripWidth = 1000;
   const top = Math.abs(topStress);
   const bottom = Math.abs(bottomStress);
-  const barDiameter = Math.max(8, Math.abs(diameter));
+  const barDiameter = Math.max(12, Math.abs(diameter));
   const hMinusX = top + bottom === 0 ? 0 : (top * effDepth) / (top + bottom);
   const x = Math.abs(effDepth - hMinusX);
   const ft = Math.abs((top * stripWidth * (effDepth - x) * 0.5) / 1000);
@@ -149,7 +155,7 @@ export function processStressData(data: StressData[]): StressData[] {
 
         currentDiameter = Math.round(calculateDiameterForSpacing(absAstReq, targetSpacing, stripWidth));
       } else {
-        currentDiameter = 8; // default minimum
+        currentDiameter = 12; // default minimum
       }
     }
 

@@ -1,5 +1,6 @@
 import React, {
   useState,
+  useEffect,
   useCallback,
   forwardRef,
   useImperativeHandle,
@@ -15,7 +16,7 @@ import type {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
-import { Upload, FileDown, Calculator, Edit2, Check, X } from "lucide-react";
+import { Upload, FileDown, Calculator, Edit2, Check, X, EyeOff, Eye } from "lucide-react";
 import {
   parseInputData,
   processStressData,
@@ -24,10 +25,56 @@ import {
 } from "../utils/stressCalculations";
 import type { StressData } from "../utils/stressCalculations";
 
+const CustomHeader = (props: any) => {
+  const [sortState, setSortState] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onSortChanged = () => {
+      if (props.column.isSortAscending()) setSortState("asc");
+      else if (props.column.isSortDescending()) setSortState("desc");
+      else setSortState(null);
+    };
+
+    onSortChanged();
+    props.column.addEventListener('sortChanged', onSortChanged);
+    return () => {
+      props.column.removeEventListener('sortChanged', onSortChanged);
+    };
+  }, [props.column]);
+
+  const onSortRequested = (event: any) => {
+    props.progressSort(event.shiftKey);
+  };
+
+  const onHideClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    props.api.setColumnsVisible([props.column.getId()], false);
+  };
+
+  let sortIcon = null;
+  if (sortState === "asc") sortIcon = "↑";
+  if (sortState === "desc") sortIcon = "↓";
+
+  return (
+    <div className="flex items-center justify-between w-full h-full group">
+      <div className="flex items-center cursor-pointer flex-1" onClick={onSortRequested}>
+        <span className="font-semibold text-sm truncate mr-1">{props.displayName}</span>
+        {sortIcon && <span className="text-blue-500 text-xs">{sortIcon}</span>}
+      </div>
+      <button 
+        onClick={onHideClick} 
+        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600 p-0.5 rounded transition-opacity"
+        title="Hide Column"
+      >
+        <EyeOff size={14} />
+      </button>
+    </div>
+  );
+};
 const DiameterCellRenderer = (props: any) => {
   return (
     <div className="flex items-center justify-between h-full group px-1">
-      <span>{props.value} </span>
+      <span>{props.valueFormatted ?? props.value}</span>
       <button
         onClick={() =>
           props.api.startEditingCell({
@@ -190,6 +237,65 @@ export const StressCalculator: React.FC = () => {
     },
     { field: "effDepth", headerName: "Eff Depth (d)", flex: 1, minWidth: 130 },
     {
+      field: "spacingOfBar",
+      headerName: "SPACING OF BAR",
+      editable: true,
+      cellRenderer: DiameterCellRenderer,
+      cellEditor: DiameterCellEditor,
+      cellEditorPopup: false,
+      flex: 1,
+      minWidth: 150,
+      valueFormatter: (p) => p.value?.toFixed(4),
+    },
+    {
+      field: "diameter",
+      headerName: "Input Diameter",
+      editable: true,
+      cellRenderer: DiameterCellRenderer,
+      cellEditor: DiameterCellEditor,
+      cellEditorPopup: false, // Force inline
+      flex: 1,
+      minWidth: 160,
+    },
+    {
+      field: "provide",
+      headerName: "Provide",
+      flex: 1,
+      minWidth: 150,
+      valueGetter: (params) => {
+        if (!params.data) return "";
+        const dia = params.data.diameter;
+        const spc = params.data.spacingOfBar;
+        
+        let range = Math.floor(spc / 25) * 25;
+        // if (range < 75) range = 75;
+        // if (range > 200) range = 200;
+        
+        return `T${dia} @ ${range}`;
+      },
+    },
+    {
+      field: "stripWidthRebar",
+      headerName: "STRIP WIDTH REBAR",
+      flex: 1,
+      minWidth: 170,
+      valueFormatter: (p) => p.value?.toFixed(4),
+    },
+    {
+      field: "rebar",
+      headerName: "REBAR",
+      flex: 1,
+      minWidth: 100,
+      valueFormatter: (p) => p.value?.toFixed(4),
+    },
+    {
+      field: "noOfBar",
+      headerName: "NO OF BAR",
+      flex: 1,
+      minWidth: 120,
+      valueFormatter: (p) => p.value?.toFixed(4),
+    },
+    {
       field: "hMinusX",
       headerName: "H-X",
       flex: 1,
@@ -216,48 +322,6 @@ export const StressCalculator: React.FC = () => {
       flex: 1,
       minWidth: 120,
       valueFormatter: (p) => p.value?.toFixed(4),
-    },
-    {
-      field: "rebar",
-      headerName: "REBAR",
-      flex: 1,
-      minWidth: 100,
-      valueFormatter: (p) => p.value?.toFixed(4),
-    },
-    {
-      field: "noOfBar",
-      headerName: "NO OF BAR",
-      flex: 1,
-      minWidth: 120,
-      valueFormatter: (p) => p.value?.toFixed(4),
-    },
-    {
-      field: "stripWidthRebar",
-      headerName: "STRIP WIDTH REBAR",
-      flex: 1,
-      minWidth: 170,
-      valueFormatter: (p) => p.value?.toFixed(4),
-    },
-    {
-      field: "spacingOfBar",
-      headerName: "SPACING OF BAR",
-      editable: true,
-      cellRenderer: DiameterCellRenderer,
-      cellEditor: DiameterCellEditor,
-      cellEditorPopup: false,
-      flex: 1,
-      minWidth: 150,
-      valueFormatter: (p) => p.value?.toFixed(4),
-    },
-    {
-      field: "diameter",
-      headerName: "Input Diameter",
-      editable: true,
-      cellRenderer: DiameterCellRenderer,
-      cellEditor: DiameterCellEditor,
-      cellEditorPopup: false, // Force inline
-      flex: 1,
-      minWidth: 160,
     },
   ];
 
@@ -420,25 +484,33 @@ export const StressCalculator: React.FC = () => {
           "NO BAR",
           "WIDTH REBAR",
           "SPACING",
+          "PROVIDE",
         ],
       ],
-      body: dataToExport.map((row) => [
-        row.id,
-        row.section,
-        row.topStress,
-        row.bottomStress,
-        row.status,
-        row.ptSlabDepth,
-        row.effDepth,
-        row.hMinusX.toFixed(4),
-        row.x.toFixed(4),
-        row.ft.toFixed(4),
-        row.astReq.toFixed(4),
-        row.rebar.toFixed(4),
-        row.noOfBar.toFixed(4),
-        row.stripWidthRebar.toFixed(4),
-        row.spacingOfBar.toFixed(4),
-      ]),
+      body: dataToExport.map((row) => {
+        let range = Math.floor(row.spacingOfBar / 25) * 25;
+        // if (range < 75) range = 75;
+        // if (range > 200) range = 200;
+        
+        return [
+          row.id,
+          row.section,
+          row.topStress,
+          row.bottomStress,
+          row.status,
+          row.ptSlabDepth,
+          row.effDepth,
+          row.hMinusX.toFixed(4),
+          row.x.toFixed(4),
+          row.ft.toFixed(4),
+          row.astReq.toFixed(4),
+          row.rebar.toFixed(4),
+          row.noOfBar.toFixed(4),
+          row.stripWidthRebar.toFixed(4),
+          row.spacingOfBar.toFixed(4),
+          `T${row.diameter} @ ${range}`,
+        ];
+      }),
       styles: { fontSize: 7 },
     });
     doc.save(getExportFilename("pdf"));
@@ -448,7 +520,18 @@ export const StressCalculator: React.FC = () => {
     const dataToExport = getFilteredData();
     if (dataToExport.length === 0) return alert("No data to export.");
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const mappedData = dataToExport.map((row) => {
+      let range = Math.floor(row.spacingOfBar / 25) * 25;
+      // if (range < 75) range = 75;
+      // if (range > 200) range = 200;
+      
+      return {
+        ...row,
+        Provide: `T${row.diameter} @ ${range}`,
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(mappedData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Stress Data");
     XLSX.writeFile(wb, getExportFilename("xlsx"));
@@ -473,6 +556,15 @@ export const StressCalculator: React.FC = () => {
   const clearFilter = () => {
     if (gridApi) {
       gridApi.setFilterModel(null);
+    }
+  };
+
+  const resetColumns = () => {
+    if (gridApi) {
+      const allColumns = gridApi.getColumns();
+      if (allColumns) {
+        gridApi.setColumnsVisible(allColumns, true);
+      }
     }
   };
 
@@ -628,6 +720,14 @@ export const StressCalculator: React.FC = () => {
                 Clear Filter
               </button>
               <button
+                onClick={resetColumns}
+                className="flex items-center gap-1 bg-slate-100 text-slate-700 hover:bg-slate-200 px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+                title="Show all hidden columns"
+              >
+                <Eye size={16} />
+                Reset Columns
+              </button>
+              <button
                 onClick={handleAdjustCalculations}
                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-md shadow-sm transition-colors text-sm font-medium ml-2"
               >
@@ -651,6 +751,8 @@ export const StressCalculator: React.FC = () => {
               defaultColDef={{
                 sortable: true,
                 resizable: true,
+                suppressMenu: true,
+                headerComponent: CustomHeader,
               }}
             />
           </div>
