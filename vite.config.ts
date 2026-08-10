@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/tkag_dxf_editor_new/',
+  // Use repo name for GitHub Pages; fallback to relative for local dev
+  base: process.env.GITHUB_REPOSITORY
+    ? `/${process.env.GITHUB_REPOSITORY.split('/')?.[1]}/`
+    : './',
   plugins: [react()],
 })

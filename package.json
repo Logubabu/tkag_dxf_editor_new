@@ -39,5 +39,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
-  }
+  },
+  "homepage": "https://logubabu.github.io/tkag_dxf_editor_new/"
 }
