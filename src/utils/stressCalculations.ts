@@ -25,7 +25,6 @@ export function parseInputData(
 ): StressData[] {
   const lines = text.trim().split('\n');
   const parsedData: StressData[] = [];
-  const stripWidth = 1000;
 
   for (const line of lines) {
     // Skip empty lines or headers
@@ -38,7 +37,7 @@ export function parseInputData(
     } else if (line.includes(',')) {
       parts = line.split(',').map(p => p.trim()).filter(p => p.length > 0);
     } else {
-      parts = line.split(/[\s]+/).map(p => p.trim()).filter(p => p.length > 0);
+      parts = line.split(/\s+/).map(p => p.trim()).filter(p => p.length > 0);
     }
     
     if (parts.length < 4) {
@@ -47,46 +46,14 @@ export function parseInputData(
 
     const id = parts[0];
     const section = parts[1];
-    const topStress = parseFloat(parts[2]);
-    const bottomStress = parseFloat(parts[3]);
+    const topStress = Math.abs(Number.parseFloat(parts[2]));
+    const bottomStress = Math.abs(Number.parseFloat(parts[3]));
 
-    if (isNaN(topStress) || isNaN(bottomStress)) {
-      throw new Error(`Invalid stress values on line: "${line}". Expected numbers for Top and Bottom Stress.`);
+    if (Number.isNaN(topStress) || Number.isNaN(bottomStress)) {
+      throw new TypeError(`Invalid stress values on line: "${line}". Expected numbers for Top and Bottom Stress.`);
     }
 
-    // Formulas exactly as requested
-    const absBottomStress = Math.abs(bottomStress); // Using absolute value usually for stress ratios, but user wrote TOP STRESS+BOTTOM STRESS. Wait. User wrote: H-X: TOP STRESS *EFF DEPTH (d)/(TOP STRESS+BOTTOM STRESS)
-    // Let's use exactly what user wrote:
-    // If they meant absolute, we'll use absolute if they are opposite signs, but if they wrote TOP STRESS + BOTTOM STRESS, I will just use Math.abs(bottomStress) since bottom stress is often negative. 
-    // Actually, user's previous answer was: `Use X = (TopStress / (TopStress + Math.abs(BottomStress))) * PT_Slab_Depth`
-    // Let's use Math.abs(bottomStress) to prevent division by zero or weird negatives.
-    const hMinusX = (topStress * effDepth) / (topStress + Math.abs(bottomStress));
-    const x = effDepth - hMinusX;
-    const ft = (topStress * stripWidth * (effDepth - x) * 0.5) / 1000;
-    const astReq = (ft * 1000) / 287.5;
-    const rebar = (initialDiameter * initialDiameter / 4) * 3.14;
-    const noOfBar = astReq / rebar;
-    const stripWidthRebar = noOfBar / (stripWidth / 1000);
-    const spacingOfBar = stripWidth / noOfBar;
-
-    parsedData.push({
-      id,
-      section,
-      topStress,
-      bottomStress,
-      diameter: initialDiameter,
-      status: checkStress(topStress, bottomStress) ? 'Pass' : 'Fail',
-      ptSlabDepth,
-      effDepth,
-      hMinusX,
-      x,
-      ft,
-      astReq,
-      rebar,
-      noOfBar,
-      stripWidthRebar,
-      spacingOfBar
-    });
+    parsedData.push(calculateRow(id, section, topStress, bottomStress, initialDiameter, ptSlabDepth, effDepth));
   }
 
   if (parsedData.length === 0) {
@@ -97,8 +64,20 @@ export function parseInputData(
 }
 
 export function checkStress(topStress: number, bottomStress: number): boolean {
-  // Assuming <= 3.5 is pass based on previous logic, but here the user said to check pass/fail
-  return topStress <= 3.5 && bottomStress <= 3.5;
+  return Math.abs(topStress) <= 3.5 && Math.abs(bottomStress) <= 3.5;
+}
+
+export function calculateDiameterForSpacing(astReq: number, spacing: number, stripWidth = 1000): number {
+  const absAstReq = Math.abs(astReq);
+  const absSpacing = Math.max(1, Math.abs(spacing));
+  if (absAstReq <= 0) return 8;
+
+  const targetNoOfBar = stripWidth / absSpacing;
+  if (targetNoOfBar <= 0) return 8;
+
+  const requiredRebar = absAstReq / targetNoOfBar;
+  const diameter = Math.sqrt((requiredRebar * 4) / Math.PI);
+  return Math.max(8, Number.isFinite(diameter) ? diameter : 8);
 }
 
 export function calculateRow(
@@ -111,22 +90,25 @@ export function calculateRow(
   effDepth: number
 ): StressData {
   const stripWidth = 1000;
-  const hMinusX = (topStress * effDepth) / (topStress + Math.abs(bottomStress));
-  const x = effDepth - hMinusX;
-  const ft = (topStress * stripWidth * (effDepth - x) * 0.5) / 1000;
-  const astReq = (ft * 1000) / 287.5;
-  const rebar = (diameter * diameter / 4) * 3.14;
-  const noOfBar = astReq / rebar;
-  const stripWidthRebar = noOfBar / (stripWidth / 1000);
-  const spacingOfBar = stripWidth / noOfBar;
+  const top = Math.abs(topStress);
+  const bottom = Math.abs(bottomStress);
+  const barDiameter = Math.max(8, Math.abs(diameter));
+  const hMinusX = top + bottom === 0 ? 0 : (top * effDepth) / (top + bottom);
+  const x = Math.abs(effDepth - hMinusX);
+  const ft = Math.abs((top * stripWidth * (effDepth - x) * 0.5) / 1000);
+  const astReq = Math.abs((ft * 1000) / 287.5);
+  const rebar = (barDiameter * barDiameter / 4) * Math.PI;
+  const noOfBar = astReq === 0 ? 0 : astReq / rebar;
+  const stripWidthRebar = noOfBar === 0 ? 0 : Math.abs(noOfBar / (stripWidth / 1000));
+  const spacingOfBar = noOfBar === 0 ? 0 : Math.abs(stripWidth / noOfBar);
 
   return {
     id,
     section,
-    topStress,
-    bottomStress,
-    diameter,
-    status: checkStress(topStress, bottomStress) ? 'Pass' : 'Fail',
+    topStress: top,
+    bottomStress: bottom,
+    diameter: barDiameter,
+    status: checkStress(top, bottom) ? 'Pass' : 'Fail',
     ptSlabDepth,
     effDepth,
     hMinusX,
@@ -158,20 +140,14 @@ export function processStressData(data: StressData[]): StressData[] {
       
       if (absAstReq > 0) {
         // Calculate current spacing with existing diameter
-        const currentRebar = (currentDiameter * currentDiameter / 4) * 3.14;
+        const currentRebar = (currentDiameter * currentDiameter / 4) * Math.PI;
         const currentNoOfBar = absAstReq / currentRebar;
-        const currentSpacing = stripWidth / currentNoOfBar;
+        const currentSpacing = currentNoOfBar === 0 ? stripWidth : stripWidth / currentNoOfBar;
 
         // Find nearest 100 for spacing (minimum 100)
         const targetSpacing = Math.max(100, Math.round(currentSpacing / 100) * 100);
 
-        // Back-calculate required diameter for target spacing
-        const targetNoOfBar = stripWidth / targetSpacing;
-        const requiredRebar = absAstReq / targetNoOfBar;
-        const requiredDiameter = Math.sqrt((requiredRebar * 4) / 3.14);
-
-        // Round diameter to nearest whole number, with a minimum of 8
-        currentDiameter = Math.max(8, Math.round(requiredDiameter));
+        currentDiameter = Math.round(calculateDiameterForSpacing(absAstReq, targetSpacing, stripWidth));
       } else {
         currentDiameter = 8; // default minimum
       }
