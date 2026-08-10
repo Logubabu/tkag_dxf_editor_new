@@ -751,7 +751,6 @@ export const StressCalculator: React.FC = () => {
               defaultColDef={{
                 sortable: true,
                 resizable: true,
-                suppressMenu: true,
                 headerComponent: CustomHeader,
               }}
             />
