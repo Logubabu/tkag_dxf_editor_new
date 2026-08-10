@@ -145,9 +145,36 @@ export function processStressData(data: StressData[]): StressData[] {
     let currentDiameter = item.diameter;
     let pass = checkStress(item.topStress, item.bottomStress);
 
-    // If it fails, auto-adjust diameter. 
+    // If it fails, auto-adjust diameter based on spacing nearest 100.
     if (!pass) {
-      currentDiameter = Math.max(currentDiameter, 16);
+      const stripWidth = 1000;
+      const hMinusX = (item.topStress * item.effDepth) / (item.topStress + Math.abs(item.bottomStress));
+      const x = item.effDepth - hMinusX;
+      const ft = (item.topStress * stripWidth * (item.effDepth - x) * 0.5) / 1000;
+      const astReq = (ft * 1000) / 287.5;
+      
+      // Use absolute value of AST REQ to prevent negative square roots (NaN)
+      const absAstReq = Math.abs(astReq);
+      
+      if (absAstReq > 0) {
+        // Calculate current spacing with existing diameter
+        const currentRebar = (currentDiameter * currentDiameter / 4) * 3.14;
+        const currentNoOfBar = absAstReq / currentRebar;
+        const currentSpacing = stripWidth / currentNoOfBar;
+
+        // Find nearest 100 for spacing (minimum 100)
+        const targetSpacing = Math.max(100, Math.round(currentSpacing / 100) * 100);
+
+        // Back-calculate required diameter for target spacing
+        const targetNoOfBar = stripWidth / targetSpacing;
+        const requiredRebar = absAstReq / targetNoOfBar;
+        const requiredDiameter = Math.sqrt((requiredRebar * 4) / 3.14);
+
+        // Round diameter to nearest whole number, with a minimum of 8
+        currentDiameter = Math.max(8, Math.round(requiredDiameter));
+      } else {
+        currentDiameter = 8; // default minimum
+      }
     }
 
     return calculateRow(
