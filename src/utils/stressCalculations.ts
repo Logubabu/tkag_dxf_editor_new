@@ -15,6 +15,7 @@ export interface StressData {
   noOfBar: number;
   stripWidthRebar: number;
   spacingOfBar: number;
+  adjusted?: boolean; // flag indicating auto‑adjust has been applied
 }
 
 export function parseInputData(
@@ -93,7 +94,8 @@ export function calculateRow(
   bottomStress: number,
   diameter: number,
   ptSlabDepth: number,
-  effDepth: number
+  effDepth: number,
+  adjusted: boolean = false
 ): StressData {
   const stripWidth = 1000;
   const top = Math.abs(topStress);
@@ -124,49 +126,58 @@ export function calculateRow(
     rebar,
     noOfBar,
     stripWidthRebar,
-    spacingOfBar
+    spacingOfBar,
+    adjusted,
   };
 }
 
 export function processStressData(data: StressData[]): StressData[] {
   return data.map(item => {
-    let currentDiameter = item.diameter;
-    let pass = checkStress(item.topStress, item.bottomStress);
+    // If this row has already been auto‑adjusted, skip further adjustments
+    if (item.adjusted) {
+      return item;
+    }
 
-    // If it fails, auto-adjust diameter based on spacing nearest 100.
+    let currentDiameter = item.diameter;
+    const pass = checkStress(item.topStress, item.bottomStress);
+
     if (!pass) {
       const stripWidth = 1000;
       const hMinusX = (item.topStress * item.effDepth) / (item.topStress + Math.abs(item.bottomStress));
       const x = item.effDepth - hMinusX;
       const ft = (item.topStress * stripWidth * (item.effDepth - x) * 0.5) / 1000;
       const astReq = (ft * 1000) / 287.5;
-      
-      // Use absolute value of AST REQ to prevent negative square roots (NaN)
       const absAstReq = Math.abs(astReq);
-      
+
       if (absAstReq > 0) {
-        // Calculate current spacing with existing diameter
-        const currentRebar = (currentDiameter * currentDiameter / 4) * Math.PI;
-        const currentNoOfBar = absAstReq / currentRebar;
-        const currentSpacing = currentNoOfBar === 0 ? stripWidth : stripWidth / currentNoOfBar;
-
-        // Find nearest 100 for spacing (minimum 100)
-        const targetSpacing = Math.max(100, Math.round(currentSpacing / 100) * 100);
-
-        currentDiameter = Math.round(calculateDiameterForSpacing(absAstReq, targetSpacing, stripWidth));
+        const spacing = item.spacingOfBar;
+        if (spacing >= 75 && spacing <= 200) {
+          currentDiameter = item.diameter;
+        } else {
+          const currentRebar = (currentDiameter * currentDiameter / 4) * Math.PI;
+          const currentNoOfBar = absAstReq / currentRebar;
+          const currentSpacing = currentNoOfBar === 0 ? stripWidth : stripWidth / currentNoOfBar;
+          const targetSpacing = Math.max(100, Math.round(currentSpacing / 100) * 100);
+          const requiredDiameter = Math.round(calculateDiameterForSpacing(absAstReq, targetSpacing, stripWidth));
+          currentDiameter = Math.max(item.diameter, requiredDiameter);
+        }
       } else {
         currentDiameter = 12; // default minimum
       }
     }
 
-    return calculateRow(
+    // Recalculate row and mark it as adjusted if we performed auto‑adjust
+    const newRow = calculateRow(
       item.id,
       item.section,
       item.topStress,
       item.bottomStress,
       currentDiameter,
       item.ptSlabDepth,
-      item.effDepth
+      item.effDepth,
+      // Mark adjusted if diameter changed from original
+      currentDiameter !== item.diameter
     );
+    return newRow;
   });
 }
