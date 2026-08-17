@@ -16,22 +16,101 @@ export interface StressData {
   stripWidthRebar: number;
   spacingOfBar: number;
   adjusted?: boolean; // flag indicating auto‑adjust has been applied
+  steelStress?: number;
+  stressLimit?: number;
+  stripWidth?: number;
+}
+
+export function checkStress(topStress: number, bottomStress: number, limit: number = 3.5): boolean {
+  return Math.abs(topStress) <= limit && Math.abs(bottomStress) <= limit;
+}
+
+export function calculateDiameterForSpacing(
+  astReq: number, 
+  spacing: number, 
+  stripWidth = 1000
+): number {
+  const absAstReq = Math.abs(astReq);
+  const absSpacing = Math.max(1, Math.abs(spacing));
+  if (absAstReq <= 0) return 12;
+
+  const targetNoOfBar = stripWidth / absSpacing;
+  if (targetNoOfBar <= 0) return 12;
+
+  const requiredRebar = absAstReq / targetNoOfBar;
+  const diameter = Math.sqrt((requiredRebar * 4) / Math.PI);
+  
+  const allowedDiameters = [12, 16, 20, 25, 32];
+  for (const d of allowedDiameters) {
+    if (d >= diameter) return d;
+  }
+  return 32;
+}
+
+export function calculateRow(
+  id: string,
+  section: string,
+  topStress: number,
+  bottomStress: number,
+  diameter: number,
+  ptSlabDepth: number,
+  effDepth: number,
+  adjusted: boolean = false,
+  steelStress: number = 287.5,
+  stressLimit: number = 3.5,
+  stripWidth: number = 1000
+): StressData {
+  const top = Math.abs(topStress);
+  const bottom = Math.abs(bottomStress);
+  const barDiameter = Math.max(12, Math.abs(diameter));
+  const hMinusX = top + bottom === 0 ? 0 : (top * effDepth) / (top + bottom);
+  const x = Math.abs(effDepth - hMinusX);
+  const ft = Math.abs((top * stripWidth * (effDepth - x) * 0.5) / 1000);
+  const astReq = Math.abs((ft * 1000) / steelStress);
+  const rebar = (barDiameter * barDiameter / 4) * Math.PI;
+  const noOfBar = astReq === 0 ? 0 : astReq / rebar;
+  const stripWidthRebar = noOfBar === 0 ? 0 : Math.abs(noOfBar / (stripWidth / 1000));
+  const spacingOfBar = noOfBar === 0 ? 0 : Math.abs(stripWidth / noOfBar);
+
+  return {
+    id,
+    section,
+    topStress: top,
+    bottomStress: bottom,
+    diameter: barDiameter,
+    status: checkStress(top, bottom, stressLimit) ? 'Pass' : 'Fail',
+    ptSlabDepth,
+    effDepth,
+    hMinusX,
+    x,
+    ft,
+    astReq,
+    rebar,
+    noOfBar,
+    stripWidthRebar,
+    spacingOfBar,
+    adjusted,
+    steelStress,
+    stressLimit,
+    stripWidth,
+  };
 }
 
 export function parseInputData(
   text: string, 
   initialDiameter: number, 
-  ptSlabDepth: number = 150,
-  effDepth: number = 250
+  ptSlabDepth: number = 250,
+  effDepth: number = 250,
+  steelStress: number = 287.5,
+  stressLimit: number = 3.5,
+  stripWidth: number = 1000
 ): StressData[] {
   const lines = text.trim().split('\n');
   const parsedData: StressData[] = [];
 
   for (const line of lines) {
-    // Skip empty lines or headers
     if (!line.trim() || line.toLowerCase().includes('top stress')) continue;
 
-    // Smart splitting: prioritize tabs, then commas, then fallback to whitespace
     let parts: string[];
     if (line.includes('\t')) {
       parts = line.split('\t').map(p => p.trim()).filter(p => p.length > 0);
@@ -54,7 +133,12 @@ export function parseInputData(
       throw new TypeError(`Invalid stress values on line: "${line}". Expected numbers for Top and Bottom Stress.`);
     }
 
-    parsedData.push(calculateRow(id, section, topStress, bottomStress, initialDiameter, ptSlabDepth, effDepth));
+    parsedData.push(
+      calculateRow(
+        id, section, topStress, bottomStress, initialDiameter, 
+        ptSlabDepth, effDepth, false, steelStress, stressLimit, stripWidth
+      )
+    );
   }
 
   if (parsedData.length === 0) {
@@ -64,89 +148,23 @@ export function parseInputData(
   return parsedData;
 }
 
-export function checkStress(topStress: number, bottomStress: number): boolean {
-  return Math.abs(topStress) <= 3.5 && Math.abs(bottomStress) <= 3.5;
-}
-
-export function calculateDiameterForSpacing(astReq: number, spacing: number, stripWidth = 1000): number {
-  const absAstReq = Math.abs(astReq);
-  const absSpacing = Math.max(1, Math.abs(spacing));
-  if (absAstReq <= 0) return 12;
-
-  const targetNoOfBar = stripWidth / absSpacing;
-  if (targetNoOfBar <= 0) return 12;
-
-  const requiredRebar = absAstReq / targetNoOfBar;
-  const diameter = Math.sqrt((requiredRebar * 4) / Math.PI);
-  // return Math.max(12, Number.isFinite(diameter) ? diameter : 12);
-  
-  const allowedDiameters = [12, 16, 20, 25, 32];
-  for (const d of allowedDiameters) {
-    if (d >= diameter) return d;
-  }
-  return 32;
-}
-
-export function calculateRow(
-  id: string,
-  section: string,
-  topStress: number,
-  bottomStress: number,
-  diameter: number,
-  ptSlabDepth: number,
-  effDepth: number,
-  adjusted: boolean = false
-): StressData {
-  const stripWidth = 1000;
-  const top = Math.abs(topStress);
-  const bottom = Math.abs(bottomStress);
-  const barDiameter = Math.max(12, Math.abs(diameter));
-  const hMinusX = top + bottom === 0 ? 0 : (top * effDepth) / (top + bottom);
-  const x = Math.abs(effDepth - hMinusX);
-  const ft = Math.abs((top * stripWidth * (effDepth - x) * 0.5) / 1000);
-  const astReq = Math.abs((ft * 1000) / 287.5);
-  const rebar = (barDiameter * barDiameter / 4) * Math.PI;
-  const noOfBar = astReq === 0 ? 0 : astReq / rebar;
-  const stripWidthRebar = noOfBar === 0 ? 0 : Math.abs(noOfBar / (stripWidth / 1000));
-  const spacingOfBar = noOfBar === 0 ? 0 : Math.abs(stripWidth / noOfBar);
-
-  return {
-    id,
-    section,
-    topStress: top,
-    bottomStress: bottom,
-    diameter: barDiameter,
-    status: checkStress(top, bottom) ? 'Pass' : 'Fail',
-    ptSlabDepth,
-    effDepth,
-    hMinusX,
-    x,
-    ft,
-    astReq,
-    rebar,
-    noOfBar,
-    stripWidthRebar,
-    spacingOfBar,
-    adjusted,
-  };
-}
-
-export function processStressData(data: StressData[]): StressData[] {
+export function processStressData(
+  data: StressData[],
+  steelStress: number = 287.5,
+  stressLimit: number = 3.5,
+  stripWidth: number = 1000
+): StressData[] {
   return data.map(item => {
-    // If this row has already been auto‑adjusted, skip further adjustments
-    if (item.adjusted) {
-      return item;
-    }
+    if (item.adjusted) return item;
 
     let currentDiameter = item.diameter;
-    const pass = checkStress(item.topStress, item.bottomStress);
+    const pass = checkStress(item.topStress, item.bottomStress, stressLimit);
 
     if (!pass) {
-      const stripWidth = 1000;
       const hMinusX = (item.topStress * item.effDepth) / (item.topStress + Math.abs(item.bottomStress));
       const x = item.effDepth - hMinusX;
       const ft = (item.topStress * stripWidth * (item.effDepth - x) * 0.5) / 1000;
-      const astReq = (ft * 1000) / 287.5;
+      const astReq = (ft * 1000) / steelStress;
       const absAstReq = Math.abs(astReq);
 
       if (absAstReq > 0) {
@@ -162,12 +180,11 @@ export function processStressData(data: StressData[]): StressData[] {
           currentDiameter = Math.max(item.diameter, requiredDiameter);
         }
       } else {
-        currentDiameter = 12; // default minimum
+        currentDiameter = 12;
       }
     }
 
-    // Recalculate row and mark it as adjusted if we performed auto‑adjust
-    const newRow = calculateRow(
+    return calculateRow(
       item.id,
       item.section,
       item.topStress,
@@ -175,9 +192,10 @@ export function processStressData(data: StressData[]): StressData[] {
       currentDiameter,
       item.ptSlabDepth,
       item.effDepth,
-      // Mark adjusted if diameter changed from original
-      currentDiameter !== item.diameter
+      currentDiameter !== item.diameter,
+      steelStress,
+      stressLimit,
+      stripWidth
     );
-    return newRow;
   });
 }
