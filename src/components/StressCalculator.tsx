@@ -24,6 +24,8 @@ import {
   calculateDiameterForSpacing,
 } from "../utils/stressCalculations";
 import type { StressData } from "../utils/stressCalculations";
+import { DxfViewer } from "./DxfViewer";
+// import { WorkedCalculations } from "./WorkedCalculations";
 
 const CustomHeader = (props: any) => {
   const [sortState, setSortState] = useState<string | null>(null);
@@ -71,6 +73,7 @@ const CustomHeader = (props: any) => {
     </div>
   );
 };
+
 const DiameterCellRenderer = (props: any) => {
   return (
     <div className="flex items-center justify-between h-full group px-1">
@@ -98,53 +101,12 @@ const DiameterCellEditor = forwardRef((props: any, ref) => {
     return {
       getValue: () => Number(value),
     };
-  }, [value]);
+  });
 
   const handleSubmit = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    const newVal = Number(value);
-    const integerVal = Math.round(newVal);
-    if (Number.isNaN(integerVal) || integerVal <= 0 || integerVal === props.value) {
-      props.api.stopEditing(false);
-      return;
-    }
-
-    let updatedRow: StressData | null = null;
-    if (props.colDef.field === "diameter") {
-      updatedRow = calculateRow(
-        props.data.id,
-        props.data.section,
-        props.data.topStress,
-        props.data.bottomStress,
-        integerVal,
-        props.data.ptSlabDepth,
-        props.data.effDepth,
-      );
-    }
-
-    if (props.colDef.field === "spacingOfBar") {
-      const requiredDiameter = calculateDiameterForSpacing(
-        props.data.astReq,
-        newVal,
-        1000,
-      );
-      updatedRow = calculateRow(
-        props.data.id,
-        props.data.section,
-        props.data.topStress,
-        props.data.bottomStress,
-        requiredDiameter,
-        props.data.ptSlabDepth,
-        props.data.effDepth,
-      );
-    }
-
-    if (updatedRow) {
-      props.node.setData(updatedRow);
-    }
-    props.api.stopEditing(false);
+    props.api.stopEditing();
   };
 
   const handleCancel = (e: React.MouseEvent) => {
@@ -185,12 +147,17 @@ const DiameterCellEditor = forwardRef((props: any, ref) => {
 });
 
 export const StressCalculator: React.FC = () => {
+  // Input Parameters
   const [inputText, setInputText] = useState("");
-  const [diameter, setDiameter] = useState<number>(12);
+  const [stripWidth, _setStripWidth] = useState<number>(1000);
   const [ptSlabDepth, setPtSlabDepth] = useState<number>(250);
   const [effDepth, setEffDepth] = useState<number>(250);
-  const [rowData, setRowData] = useState<StressData[]>([]);
+  const [diameter, setDiameter] = useState<number>(12);
+  const [steelStress, _setSteelStress] = useState<number>(287.5);
+  const [stressLimit, _setStressLimit] = useState<number>(3.5);
 
+
+  const [rowData, setRowData] = useState<StressData[]>([]);
   const [gridApi, setGridApi] = useState<any>(null);
 
   const columnDefs: ColDef[] = [
@@ -208,6 +175,7 @@ export const StressCalculator: React.FC = () => {
       filter: "agNumberColumnFilter",
       flex: 1,
       minWidth: 120,
+      valueFormatter: (p) => p.value?.toFixed(3),
     },
     {
       field: "bottomStress",
@@ -215,6 +183,7 @@ export const StressCalculator: React.FC = () => {
       filter: "agNumberColumnFilter",
       flex: 1,
       minWidth: 120,
+      valueFormatter: (p) => p.value?.toFixed(3),
     },
     {
       field: "status",
@@ -253,7 +222,7 @@ export const StressCalculator: React.FC = () => {
       editable: true,
       cellRenderer: DiameterCellRenderer,
       cellEditor: DiameterCellEditor,
-      cellEditorPopup: false, // Force inline
+      cellEditorPopup: false,
       flex: 1,
       minWidth: 160,
     },
@@ -266,11 +235,7 @@ export const StressCalculator: React.FC = () => {
         if (!params.data) return "";
         const dia = params.data.diameter;
         const spc = params.data.spacingOfBar;
-        
         let range = Math.floor(spc / 25) * 25;
-        // if (range < 75) range = 75;
-        // if (range > 200) range = 200;
-        
         return `T${dia} @ ${range}`;
       },
     },
@@ -330,27 +295,36 @@ export const StressCalculator: React.FC = () => {
       const text = typeof textToParse === "string" ? textToParse : inputText;
       if (!text) return;
       try {
-        const parsed = parseInputData(text, diameter, ptSlabDepth, effDepth);
+        const parsed = parseInputData(
+          text, 
+          diameter, 
+          ptSlabDepth, 
+          effDepth, 
+          steelStress, 
+          stressLimit, 
+          stripWidth
+        );
         setRowData(parsed);
 
-        // Clear any existing filters when parsing new data
         if (gridApi) {
           gridApi.setFilterModel(null);
+          setTimeout(() => {
+            gridApi.sizeColumnsToFit();
+          }, 100);
         }
       } catch (error: any) {
         alert(`Error parsing data: ${error.message}`);
       }
     },
-    [inputText, diameter, ptSlabDepth, effDepth, gridApi],
+    [inputText, diameter, ptSlabDepth, effDepth, steelStress, stressLimit, stripWidth, gridApi],
   );
 
   const handleAdjustCalculations = useCallback(() => {
-    const updatedData = processStressData(rowData);
+    const updatedData = processStressData(rowData, steelStress, stressLimit, stripWidth);
     setRowData(updatedData);
-  }, [rowData]);
+  }, [rowData, steelStress, stressLimit, stripWidth]);
 
   const getRowId = useCallback((params: any) => {
-    // A unique ID is required for ag-Grid to properly merge React state updates
     return `${params.data.id}_${params.data.section}`;
   }, []);
 
@@ -370,6 +344,10 @@ export const StressCalculator: React.FC = () => {
         integerVal,
         params.data.ptSlabDepth,
         params.data.effDepth,
+        false,
+        steelStress,
+        stressLimit,
+        stripWidth
       );
     }
 
@@ -377,7 +355,7 @@ export const StressCalculator: React.FC = () => {
       const requiredDiameter = calculateDiameterForSpacing(
         params.data.astReq,
         newVal,
-        1000,
+        stripWidth,
       );
       updatedRow = calculateRow(
         params.data.id,
@@ -387,6 +365,10 @@ export const StressCalculator: React.FC = () => {
         requiredDiameter,
         params.data.ptSlabDepth,
         params.data.effDepth,
+        false,
+        steelStress,
+        stressLimit,
+        stripWidth
       );
     }
 
@@ -403,7 +385,7 @@ export const StressCalculator: React.FC = () => {
       }
       return newData;
     });
-  }, []);
+  }, [steelStress, stressLimit, stripWidth]);
 
   const onRowEditingStarted = useCallback((params: any) => {
     params.api.refreshCells({
@@ -425,19 +407,60 @@ export const StressCalculator: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    file
-      .text()
-      .then((textContent) => {
-        const cleanedText = textContent
-          .replaceAll('"', "")
-          .replaceAll("\0", "");
-        setInputText(cleanedText);
-        handleParseData(cleanedText);
-      })
-      .catch((readError) => {
-        alert(`Error reading file: ${readError}`);
-      });
+    const nameLower = file.name.toLowerCase();
+
+    if (nameLower.endsWith('.xlsx') || nameLower.endsWith('.xls')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target?.result;
+          const wb = XLSX.read(buffer, { type: 'array' });
+          const sheetName = wb.SheetNames[0];
+          const sheet = wb.Sheets[sheetName];
+          const rawRows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+          const validLines: string[] = [];
+          for (const r of rawRows) {
+            if (!r || r.length < 4) continue;
+            // Filter non-empty cells
+            const cells = r.map(c => String(c ?? '').trim()).filter(c => c.length > 0);
+            if (cells.length >= 4) {
+              const topVal = Number(cells[2]);
+              const botVal = Number(cells[3]);
+              if (!Number.isNaN(topVal) && !Number.isNaN(botVal)) {
+                validLines.push(`${cells[0]}\t${cells[1]}\t${cells[2]}\t${cells[3]}`);
+              }
+            }
+          }
+
+          if (validLines.length === 0) {
+            return alert("No valid data rows (ID, Section, Top, Bot) found in Excel sheet.");
+          }
+
+          const formattedText = validLines.join('\n');
+          setInputText(formattedText);
+          handleParseData(formattedText);
+        } catch (err: any) {
+          alert(`Error reading Excel file: ${err.message}`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      file
+        .text()
+        .then((textContent) => {
+          const cleanedText = textContent
+            .replaceAll('"', "")
+            .replaceAll("\0", "");
+          setInputText(cleanedText);
+          handleParseData(cleanedText);
+        })
+        .catch((readError) => {
+          alert(`Error reading file: ${readError}`);
+        });
+    }
   };
+
 
   const getFilteredData = () => {
     if (!gridApi) return rowData;
@@ -482,37 +505,33 @@ export const StressCalculator: React.FC = () => {
           "AST REQ",
           "REBAR",
           "NO BAR",
-          "WIDTH REBAR",
           "SPACING",
           "PROVIDE",
         ],
       ],
       body: dataToExport.map((row) => {
         let range = Math.floor(row.spacingOfBar / 25) * 25;
-        // if (range < 75) range = 75;
-        // if (range > 200) range = 200;
-        
         return [
           row.id,
           row.section,
-          row.topStress,
-          row.bottomStress,
+          row.topStress.toFixed(3),
+          row.bottomStress.toFixed(3),
           row.status,
           row.ptSlabDepth,
           row.effDepth,
-          row.hMinusX.toFixed(4),
-          row.x.toFixed(4),
-          row.ft.toFixed(4),
-          row.astReq.toFixed(4),
-          row.rebar.toFixed(4),
-          row.noOfBar.toFixed(4),
-          row.stripWidthRebar.toFixed(4),
-          row.spacingOfBar.toFixed(4),
+          row.hMinusX.toFixed(2),
+          row.x.toFixed(2),
+          row.ft.toFixed(2),
+          row.astReq.toFixed(2),
+          row.rebar.toFixed(2),
+          row.noOfBar.toFixed(2),
+          row.spacingOfBar.toFixed(1),
           `T${row.diameter} @ ${range}`,
         ];
       }),
       styles: { fontSize: 7 },
     });
+
     doc.save(getExportFilename("pdf"));
   };
 
@@ -522,9 +541,6 @@ export const StressCalculator: React.FC = () => {
 
     const mappedData = dataToExport.map((row) => {
       let range = Math.floor(row.spacingOfBar / 25) * 25;
-      // if (range < 75) range = 75;
-      // if (range > 200) range = 200;
-      
       return {
         ...row,
         Provide: `T${row.diameter} @ ${range}`,
@@ -539,7 +555,9 @@ export const StressCalculator: React.FC = () => {
 
   const onGridReady = (params: GridReadyEvent) => {
     setGridApi(params.api);
-    params.api.sizeColumnsToFit();
+    setTimeout(() => {
+      params.api.sizeColumnsToFit();
+    }, 150);
   };
 
   const filterFailed = () => {
@@ -568,24 +586,43 @@ export const StressCalculator: React.FC = () => {
     }
   };
 
+  // Summary Metrics (Uncomment when enabling Summary block)
+  /*
+  const totalSections = rowData.length;
+  const failSections = rowData.filter(
+    r => r.topStress > stressLimit || r.bottomStress > stressLimit || r.status === 'Fail'
+  );
+  const passCount = totalSections - failSections.length;
+  const peakAst = rowData.length > 0 ? Math.max(...rowData.map(r => r.astReq)) : 0;
+  const closestSp = rowData.length > 0 ? Math.min(...rowData.map(r => r.spacingOfBar)) : 0;
+  const closestSpRound = closestSp > 0 ? Math.floor(closestSp / 25) * 25 : 0;
+
+  const govRow = rowData.length > 0
+    ? [...rowData].sort((a,b) => Math.max(b.topStress, b.bottomStress) - Math.max(a.topStress, a.bottomStress))[0]
+    : null;
+  const govStress = govRow ? Math.max(govRow.topStress, govRow.bottomStress) : 0;
+  const govProvide = govRow ? `T${govRow.diameter} @ ${Math.floor(govRow.spacingOfBar / 25) * 25} mm` : '';
+  */
+
+
   return (
-    <div className="flex flex-col h-screen w-full bg-slate-50 p-6 space-y-6">
+    <div className="flex flex-col min-h-screen w-full bg-slate-50 p-6 space-y-6 overflow-y-auto">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-slate-800 tracking-tight">
-          {" "}
-          Stress Calculation Tool{" "}
+          Tensile stress calculation and reinforcement
         </h1>
         <div className="flex gap-3">
           <button
             onClick={exportPdf}
-            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors"
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors text-sm font-medium"
           >
             <FileDown size={18} />
             Export PDF
           </button>
           <button
             onClick={exportExcel}
-            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors"
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow-sm transition-colors text-sm font-medium"
           >
             <FileDown size={18} />
             Export Excel
@@ -593,119 +630,149 @@ export const StressCalculator: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 w-full lg:w-1/5 flex flex-col h-fit">
-          <h2 className="text-xl font-semibold mb-4 text-slate-700">
-            {" "}
-            Data Input{" "}
-          </h2>
+      {/* Summary Section (Uncomment below block to enable in future) */}
+      {/* 
+      <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-3">
+        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-2">
+        Summary
+        </h2>
 
-          <div className="space-y-4 flex-1">
-            <div>
-              <label
-                htmlFor="stress-input"
-                className="block text-sm font-medium text-slate-600 mb-1"
-              >
-                {" "}
-                Paste Data(ID, Section, Top, Bottom){" "}
-              </label>
-              <textarea
-                id="stress-input"
-                className="w-full h-32 p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-mono text-sm"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="1\tSec-A\t2.5\t1.5\n2\tSec-B\t4.0\t2.0"
-              />
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Sections</div>
+            <div className="text-xl font-extrabold text-slate-800 font-mono mt-0.5">{totalSections}</div>
+          </div>
+          <div className="bg-emerald-50/60 p-3 rounded-lg border border-emerald-200">
+            <div className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Pass</div>
+            <div className="text-xl font-extrabold text-emerald-700 font-mono mt-0.5">{passCount}</div>
+          </div>
+          <div className="bg-red-50/60 p-3 rounded-lg border border-red-200">
+            <div className="text-[10px] font-bold text-red-700 uppercase tracking-wider">Fail (&gt; {stressLimit} MPa)</div>
+            <div className={`text-xl font-extrabold font-mono mt-0.5 ${failSections.length > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+              {failSections.length}
             </div>
-
-            <div className="flex items-center justify-center w-full">
-              <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors">
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <Upload className="w-6 h-6 mb-2 text-slate-500" />
-                  <p className="text-sm text-slate-500">
-                    {" "}
-                    <span className="font-semibold"> Click to upload </span> txt
-                    or csv file
-                  </p>
-                </div>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".txt,.csv"
-                  onChange={handleFileUpload}
-                />
-              </label>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div>
-                <label
-                  htmlFor="pt-slab-depth"
-                  className="block text-sm font-medium text-slate-600 mb-1"
-                >
-                  {" "}
-                  PT Slab Depth(D){" "}
-                </label>
-                <input
-                  id="pt-slab-depth"
-                  type="number"
-                  value={ptSlabDepth}
-                  onChange={(e) => setPtSlabDepth(Number(e.target.value))}
-                  className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="eff-depth"
-                  className="block text-sm font-medium text-slate-600 mb-1"
-                >
-                  {" "}
-                  Eff Depth(d){" "}
-                </label>
-                <input
-                  id="eff-depth"
-                  type="number"
-                  value={effDepth}
-                  onChange={(e) => setEffDepth(Number(e.target.value))}
-                  className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="diameter-input"
-                  className="block text-sm font-medium text-slate-600 mb-1"
-                >
-                  {" "}
-                  Diameter{" "}
-                </label>
-                <input
-                  id="diameter-input"
-                  type="number"
-                  value={diameter}
-                  onChange={(e) => {
-                    const parsed = Number(e.target.value);
-                    if (!Number.isNaN(parsed)) {
-                      setDiameter(Math.round(parsed));
-                    }
-                  }}
-                  step={1}
-                  className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={() => handleParseData()}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg shadow-sm transition-colors mt-4"
-            >
-              Parse Data & Calculate
-            </button>
+          </div>
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Peak A<sub>st</sub> req</div>
+            <div className="text-xl font-extrabold text-blue-700 font-mono mt-0.5">{peakAst > 0 ? peakAst.toFixed(0) : 0} <span className="text-xs font-normal text-slate-500">mm²</span></div>
+          </div>
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Closest Spacing</div>
+            <div className="text-xl font-extrabold text-amber-600 font-mono mt-0.5">{closestSpRound > 0 ? closestSpRound : 0} <span className="text-xs font-normal text-slate-500">mm</span></div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 w-full lg:w-4/5 flex flex-col">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-slate-700"> Results </h2>
+        {govRow && (
+          <div className="pt-2 text-xs border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-slate-700 font-sans">
+            <div>
+              Governing section <strong className="font-mono text-slate-900">{govRow.id}</strong> (Sec {govRow.section}) &nbsp;&middot;&nbsp; &sigma; = <strong className="font-mono text-slate-900">{govStress.toFixed(3)} N/mm²</strong> &nbsp;&middot;&nbsp; provide <strong className="font-mono text-emerald-800">{govProvide}</strong> giving {govRow.astReq.toFixed(0)} mm² over a {stripWidth} mm strip
+            </div>
+            <span className={`font-bold px-2 py-0.5 rounded text-[10px] uppercase shrink-0 ${failSections.length > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+              {failSections.length > 0 ? 'Action Required' : 'All Pass'}
+            </span>
+          </div>
+        )}
+      </div>
+      */}
+
+
+      {/* Inputs & Controls Section */}
+      <div className="flex flex-col lg:flex-row gap-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 w-full lg:w-1/4 flex flex-col h-fit space-y-4">
+          <h2 className="text-xl font-semibold text-slate-700">Data Input</h2>
+
+          <div>
+            <label htmlFor="stress-input" className="block text-sm font-medium text-slate-600 mb-1">
+              Paste Data (ID, Section, Top, Bottom)
+            </label>
+            <textarea
+              id="stress-input"
+              className="w-full h-32 p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none font-mono text-sm"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="1C-2&#9;12&#9;4.399&#9;-4.466&#10;1-1&#9;1&#9;3.778&#9;-3.716"
+            />
+          </div>
+
+          <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors">
+            <div className="flex flex-col items-center justify-center">
+              <Upload className="w-5 h-5 mb-1 text-slate-500" />
+              <p className="text-xs text-slate-500 font-medium">Upload .txt, .csv, or .xlsx file</p>
+            </div>
+            <input type="file" className="hidden" accept=".txt,.csv,.xlsx,.xls" onChange={handleFileUpload} />
+          </label>
+
+
+          <div className="grid grid-cols-2 gap-3 text-xs pt-2">
+            <div hidden = {true}>
+              <label className="block text-slate-600 mb-1 font-medium">Strip width (b)</label>
+              <input disabled={true}
+                type="number"
+                value={stripWidth}
+                // onChange={(e) => setStripWidth(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1 font-medium">PT Slab Depth (D)</label>
+              <input
+                type="number"
+                value={ptSlabDepth}
+                onChange={(e) => setPtSlabDepth(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1 font-medium">Eff Depth (d)</label>
+              <input
+                type="number"
+                value={effDepth}
+                onChange={(e) => setEffDepth(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1 font-medium">Diameter (&Oslash;)</label>
+              <input
+                type="number"
+                value={diameter}
+                onChange={(e) => setDiameter(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono"
+              />
+            </div>
+            <div hidden={true}>
+              <label className="block text-slate-600 mb-1 font-medium">Steel stress (f<sub>s</sub>)</label>
+              <input disabled={true}
+                type="number"
+                value={steelStress}
+                // onChange={(e) => setSteelStress(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono"
+              />
+            </div>
+            <div hidden={true}>
+              <label className="block text-slate-600 mb-1 font-medium">Stress limit (MPa)</label>
+              <input disabled={true}
+                type="number"
+                step="0.1"
+                value={stressLimit}
+               // onChange={(e) => setStressLimit(Number(e.target.value))}
+                className="w-full p-2 border border-slate-300 rounded-lg outline-none font-mono font-bold text-red-600"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={() => handleParseData()}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg shadow-sm transition-colors text-sm mt-2"
+          >
+            Parse Data & Calculate
+          </button>
+        </div>
+
+        {/* Right Column: Grid Results Table */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 w-full lg:w-3/4 flex flex-col space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-700">Results</h2>
             <div className="flex items-center gap-3">
               <button
                 onClick={filterFailed}
@@ -737,7 +804,8 @@ export const StressCalculator: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex-1 min-h-[400px] w-full bg-white ag-theme-alpine rounded-lg overflow-hidden border border-slate-200">
+          {/* Ag-Grid Container with Fixed Explicit Pixel Height (520px) */}
+          <div className="w-full h-[520px] bg-white ag-theme-alpine rounded-lg overflow-hidden border border-slate-200" style={{ height: '520px', width: '100%' }}>
             <AgGridReact
               rowData={rowData}
               getRowId={getRowId}
@@ -757,6 +825,12 @@ export const StressCalculator: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Step 5: DXF Plan Markup & SVG Interactive Preview */}
+      <DxfViewer stressRows={rowData} barDia={diameter} stressLimit={stressLimit} />
+
+      {/* Step 6: Worked Calculations for Governing Sections (Uncomment below to enable) */}
+      {/* <WorkedCalculations data={rowData} /> */}
     </div>
   );
 };
